@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>透明物理幕布 • 视频支持与录制版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body, html {
+            margin: 0; padding: 0; overflow: hidden;
+            background: #000; width: 100%; height: 100%;
+            touch-action: none; -webkit-user-select: none; user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        #canvas-container { width: 100vw; height: 100vh; position: relative; }
+        
+        #start-mask {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 10, 10, 0.95); z-index: 999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #fff; transition: opacity 0.5s ease;
+        }
+        .btn {
+            padding: 12px 32px; background: #fff; color: #000; border: none;
+            border-radius: 24px; font-weight: bold; cursor: pointer; font-size: 16px;
+            box-shadow: 0 4px 20px rgba(255,255,255,0.3); transition: transform 0.2s;
+        }
+        .btn:active { transform: scale(0.95); }
+
+        .ui-panel {
+            position: absolute; z-index: 100; color: #fff;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        .ui-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        
+        #top-right { top: 20px; right: 20px; }
+        #bottom-right { bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 12px; align-items: flex-end; }
+        
+        .icon-btn {
+            background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+            width: 44px; height: 44px; border-radius: 50%; color: #fff; cursor: pointer;
+            backdrop-filter: blur(8px); display: flex; justify-content: center; align-items: center;
+            font-size: 18px; transition: background 0.2s, transform 0.1s;
+        }
+        .icon-btn:hover { background: rgba(255,255,255,0.3); }
+        .icon-btn:active { transform: scale(0.9); }
+        
+        .control-group {
+            background: rgba(0,0,0,0.6); padding: 12px 16px; border-radius: 16px;
+            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
+            display: flex; flex-direction: column; gap: 6px; min-width: 160px;
+        }
+        .control-group label { font-size: 12px; color: #aaa; }
+        .slider { width: 100%; accent-color: #fff; }
+        
+        #file-input { display: none; }
+        #webcam-video { display: none; }
+        
+        /* 录制状态的闪烁动画 */
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(255, 50, 50, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 50, 50, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 50, 50, 0); }
+        }
+        .recording {
+            background: rgba(255, 50, 50, 0.8) !important;
+            animation: pulse-red 1.5s infinite;
+        }
+
+        /* 录制状态指示器 - 不受 UI 隐藏影响 */
+        #record-indicator {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 200; display: none; align-items: center; gap: 10px;
+            background: rgba(0, 0, 0, 0.75); padding: 8px 20px; border-radius: 20px;
+            backdrop-filter: blur(8px); border: 1px solid rgba(255, 50, 50, 0.4);
+            color: #fff; font-size: 14px; font-weight: 500;
+            transition: opacity 0.3s;
+        }
+        #record-indicator.active { display: flex; }
+        .rec-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: #ff3232; animation: pulse-red 1.5s infinite;
+        }
+        #record-timer { font-variant-numeric: tabular-nums; min-width: 48px; }
+
+        /* 预览/下载确认弹窗 */
+        #preview-modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.8); z-index: 300;
+            display: none; justify-content: center; align-items: center;
+            flex-direction: column; gap: 20px;
+        }
+        #preview-modal.active { display: flex; }
+        #preview-video {
+            max-width: 70vw; max-height: 50vh; border-radius: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+        .modal-actions { display: flex; gap: 16px; }
+        .modal-btn {
+            padding: 10px 28px; border: none; border-radius: 24px;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s, opacity 0.15s;
+        }
+        .modal-btn:hover { opacity: 0.9; }
+        .modal-btn:active { transform: scale(0.95); }
+        .modal-btn.primary { background: #fff; color: #000; }
+        .modal-btn.secondary { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    </style>
+</head>
+<body>
+
+    <div id="start-mask">
+        <h2 style="margin-bottom: 20px; font-weight: 300; letter-spacing: 2px;">透明物理幕布 • OPTICAL CURTAIN</h2>
+        <button class="btn" id="start-btn">开启体验</button>
+    </div>
+
+    <div id="top-right" class="ui-panel">
+        <button class="icon-btn" id="toggle-ui-btn" title="切换UI显示">👁️</button>
+    </div>
+
+    <div id="bottom-right" class="ui-panel">
+        <div class="control-group">
+            <label>幕布缩放比例</label>
+            <input type="range" id="scale-slider" class="slider" min="0.4" max="1.2" step="0.05" value="1">
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button class="icon-btn" id="record-btn" title="录制交互视频">🎥</button>
+            <button class="icon-btn" id="flip-btn" title="翻转摄像头">🔄</button>
+            <button class="icon-btn" id="upload-btn" title="上传背景图/海浪视频">📁</button>
+        </div>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*,video/*">
+    <video id="webcam-video" playsinline></video>
+    <div id="canvas-container"></div>
+
+    <!-- 录制状态指示器 - 不受 UI 隐藏影响 -->
+    <div id="record-indicator">
+        <span class="rec-dot"></span>
+        <span>录制中</span>
+        <span id="record-timer">00:00</span>
+    </div>
+
+    <!-- 录制预览与下载确认弹窗 -->
+    <div id="preview-modal">
+        <video id="preview-video" controls playsinline></video>
+        <div class="modal-actions">
+            <button class="modal-btn secondary" id="discard-btn">丢弃</button>
+            <button class="modal-btn primary" id="download-btn">保存下载</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 物理参数与防抖配置 ---
+        const COLS = 38;
+        const ROWS = 35;
+        const ITERATIONS = 12;        
+        const FRICTION = 0.95;        
+        const GRAVITY = 0.25;         
+        const STIFFNESS = 0.65;       
+        
+        const SMOOTHING = 0.4;        
+        const MAX_JUMP = 150;         
+        const PINCH_THRESHOLD_PRESS = 0.07;   
+        const PINCH_THRESHOLD_RELEASE = 0.12; 
+        const TRACK_RADIUS = 250;     
+        const GRAB_RADIUS = 150;
+        
+        let physics, curtainWidth, curtainHeight, startX, startY;
+        let videoCap; 
+        let uploadedMedia = null;
+        let mediaType = null; 
+        
+        let uiVisible = true;
+        let isFlipped = true;
+        let globalScale = 1.0;
+        let activeHands = {};
+        let mediapipeCamera = null; // 存储 MediaPipe Camera 引用用于清理
+
+        // --- 浏览器检测与编码格式适配 ---
+        function isSafari() {
+            const ua = navigator.userAgent;
+            // 匹配含 Safari 但不含 Chrome/CriOS/Android 的 UA（覆盖 macOS 和 iPadOS 的现代 Safari）
+            return /^((?!chrome|android).)*safari/i.test(ua);
+        }
+
+        function getRecorderMimeType() {
+            if (isSafari()) {
+                // Safari 仅支持 H.264/MP4 容器，codec 字符串必须带双引号
+                const safariCodecs = [
+                    'video/mp4;codecs="avc1.64001f"',  // High Profile Level 3.1
+                    'video/mp4;codecs="avc1.4d002a"',  // Main Profile Level 4.2
+                    'video/mp4;codecs="avc1.42E01E"',  // Baseline Profile Level 3.0
+                    'video/mp4;codecs="avc1.42001E"',  // Baseline (无约束)
+                    'video/mp4',                         // 最终回退
+                ];
+                for (let mt of safariCodecs) {
+                    if (MediaRecorder.isTypeSupported(mt)) return mt;
+                }
+                return '';
+            } else {
+                // Chrome / Firefox / Edge：优先 WebM
+                const chromeCodecs = [
+                    'video/webm;codecs=vp9',
+                    'video/webm;codecs=vp8',
+                    'video/webm',
+                    'video/mp4',
+                ];
+                for (let mt of chromeCodecs) {
+                    if (MediaRecorder.isTypeSupported(mt)) return mt;
+                }
+                return '';
+            }
+        }
+
+        function getFileExtension(mimeType) {
+            if (mimeType.includes('mp4')) return 'mp4';
+            return 'webm';
+        }
+
+        // --- 录像控制状态 ---
+        let isRecording = false;
+        let mediaRecorder;
+        let recordedChunks = [];
+        let uiAutoHiddenByRecord = false; // 记录是否因录制而自动隐藏 UI
+        let recordTimerInterval = null;
+        let recordSeconds = 0;
+        let pendingRecordBlob = null; // 录制完成后暂存的 Blob，供预览下载使用
+
+        // --- MediaPipe 核心架构 ---
+        const videoElement = document.getElementById('webcam-video');
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+        
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7, 
+            minTrackingConfidence: 0.7   
+        });
+
+        hands.onResults(onHandResults);
+
+        function onHandResults(results) {
+            let currentFrameHands = [];
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    let landmarks = results.multiHandLandmarks[i];
+                    let label = results.multiHandedness[i].label === 'Left' ? 'right' : 'left'; 
+                    
+                    let thumb = landmarks[4];
+                    let index = landmarks[8];
+                    
+                    let pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+                    let rawX = (thumb.x + index.x) / 2;
+                    let mixX = isFlipped ? (1 - rawX) * width : rawX * width;
+                    let mixY = ((thumb.y + index.y) / 2) * height;
+                    
+                    currentFrameHands.push({ x: mixX, y: mixY, dist: pinchDist, origLabel: label });
+                }
+            }
+            
+            let updatedHands = {};
+            for (let h of currentFrameHands) {
+                let assignedSide = h.origLabel;
+                let minDist = Infinity;
+                let matchedSide = null;
+                for (let side in activeHands) {
+                    let dx = h.x - activeHands[side].x;
+                    let dy = h.y - activeHands[side].y;
+                    let d = Math.hypot(dx, dy);
+                    if (d < TRACK_RADIUS && d < minDist) {
+                        minDist = d;
+                        matchedSide = side;
+                    }
+                }
+                if (matchedSide) assignedSide = matchedSide;
+                
+                let wasPinching = false;
+                let finalX = h.x;
+                let finalY = h.y;
+                let vx = 0, vy = 0;
+                
+                if (activeHands[assignedSide]) {
+                    let prevH = activeHands[assignedSide];
+                    wasPinching = prevH.pinching;
+                    
+                    let dxRaw = h.x - prevH.x;
+                    let dyRaw = h.y - prevH.y;
+                    
+                    let distJump = Math.hypot(dxRaw, dyRaw);
+                    if (distJump > MAX_JUMP) {
+                        let ratio = MAX_JUMP / distJump;
+                        dxRaw *= ratio;
+                        dyRaw *= ratio;
+                    }
+                    
+                    finalX = prevH.x + dxRaw * SMOOTHING;
+                    finalY = prevH.y + dyRaw * SMOOTHING;
+                    
+                    vx = finalX - prevH.x;
+                    vy = finalY - prevH.y;
+                }
+                
+                let pinching = wasPinching ? (h.dist < PINCH_THRESHOLD_RELEASE) : (h.dist < PINCH_THRESHOLD_PRESS);
+                
+                updatedHands[assignedSide] = {
+                    x: finalX, y: finalY, 
+                    vx: vx, vy: vy,
+                    pinching: pinching,
+                    grabbedPoints: (activeHands[assignedSide] && pinching) ? activeHands[assignedSide].grabbedPoints : null
+                };
+            }
+            
+            activeHands = updatedHands;
+            if (physics) physics.handleInteraction();
+        }
+
+        // --- p5.js 核心引擎 ---
+        function setup() {
+            const canvas = createCanvas(windowWidth, windowHeight);
+            canvas.parent('canvas-container');
+            
+            videoCap = createCapture(VIDEO, {
+                video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+            }, () => {
+                videoElement.srcObject = videoCap.elt.srcObject;
+                videoElement.play();
+                mediapipeCamera = new Camera(videoElement, {
+                    onFrame: async () => { await hands.send({ image: videoElement }); },
+                    width: 640, height: 480
+                });
+                mediapipeCamera.start();
+            });
+            videoCap.hide();
+            
+            initCurtain();
+            setupUIHandlers();
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            initCurtain();
+        }
+
+        function initCurtain() {
+            let aspect = 4 / 3;
+            if (uploadedMedia) {
+                let imgW = mediaType === 'image' ? uploadedMedia.width : uploadedMedia.elt.videoWidth;
+                let imgH = mediaType === 'image' ? uploadedMedia.height : uploadedMedia.elt.videoHeight;
+                if (imgW && imgH) aspect = imgW / imgH;
+            }
+            
+            let maxW = width * 0.85;
+            let maxH = height * 0.55;
+            
+            curtainHeight = maxH;
+            curtainWidth = curtainHeight * aspect;
+            if (curtainWidth > maxW) {
+                curtainWidth = maxW;
+                curtainHeight = curtainWidth / aspect;
+            }
+            
+            curtainWidth *= globalScale;
+            curtainHeight *= globalScale;
+            
+            startX = (width - curtainWidth) / 2;
+            startY = (height - curtainHeight) / 2;
+            
+            physics = new VerletSystem(COLS, ROWS, curtainWidth / (COLS - 1), curtainHeight / (ROWS - 1));
+        }
+
+        function draw() {
+            background(0);
+            if (!videoCap) return;
+            
+            physics.update();
+            
+            push();
+            if (isFlipped) { translate(width, 0); scale(-1, 1); }
+            image(videoCap, 0, 0, width, height);
+            pop();
+            
+            push();
+            if (uploadedMedia) {
+                // 如果是视频，必须持续调用渲染
+                image(uploadedMedia, startX, startY, curtainWidth, curtainHeight);
+            } else {
+                fill(22, 22, 25);
+                noStroke();
+                rect(startX, startY, curtainWidth, curtainHeight);
+                fill(150);
+                textAlign(CENTER, CENTER);
+                textSize(16);
+                text("请点击 📁 上传背景图/视频\n点击 🎥 可录制您的魔术手势交互过程", startX + curtainWidth/2, startY + curtainHeight/2);
+            }
+            pop();
+            
+            push();
+            let ctx = drawingContext;
+            ctx.save();
+            
+            ctx.beginPath();
+            for (let x = 0; x < COLS; x++) {
+                let p = physics.particles[0][x];
+                if (x === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+            }
+            for (let y = 1; y < ROWS; y++) {
+                let p = physics.particles[y][COLS - 1];
+                ctx.lineTo(p.x, p.y);
+            }
+            for (let x = COLS - 2; x >= 0; x--) {
+                let p = physics.particles[ROWS - 1][x];
+                ctx.lineTo(p.x, p.y);
+            }
+            for (let y = ROWS - 2; y >= 0; y--) {
+                let p = physics.particles[y][0];
+                ctx.lineTo(p.x, p.y);
+            }
+            ctx.closePath();
+            ctx.clip(); 
+            
+            push();
+            if (isFlipped) { translate(width, 0); scale(-1, 1); }
+            image(videoCap, 0, 0, width, height);
+            pop();
+            
+            ctx.restore(); 
+            pop();
+            
+            physics.renderTexture();
+
+            if (uiVisible) drawDebugHands();
+
+            // Safari 帧同步：在每帧绘制完成后通知 MediaRecorder 获取最新帧
+            // 解决 Safari canvas.captureStream 独立采集导致的帧率掉帧问题
+            if (isRecording && isSafari() && mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.requestData();
+            }
+        }
+
+        // --- 物理系统 ---
+        class Particle {
+            constructor(x, y) {
+                this.x = x; this.y = y;
+                this.px = x; this.py = y;
+                this.vx = 0; this.vy = 0;
+                this.isPinned = false;
+                this.isGrabbed = false; 
+                this.origX = x; this.origY = y;
+                this.state = 0;
+                this.targetY = y;
+                this.restoreForce = 0;
+            }
+            update() {
+                if (this.isPinned || this.isGrabbed) return;
+
+                let noiseWind = (noise(this.origX * 0.005, this.origY * 0.005, frameCount * 0.02) - 0.5) * 0.12;
+
+                let stateForceY = 0;
+                if (this.state === 1) {
+                    stateForceY = (this.targetY - this.y) * this.restoreForce;
+                } else if (this.state === 2) {
+                    stateForceY = (this.origY - this.y) * this.restoreForce;
+                }
+
+                this.vx = (this.x - this.px) * FRICTION + noiseWind;
+                this.vy = (this.y - this.py) * FRICTION + GRAVITY + stateForceY;
+
+                this.px = this.x; this.py = this.y;
+                this.x += this.vx; this.y += this.vy;
+
+                // 边界约束：防止粒子飞出画布可视范围
+                const BOUND_MARGIN = 200; // 允许少量超出，给物理系统缓冲空间
+                this.x = constrain(this.x, -BOUND_MARGIN, width + BOUND_MARGIN);
+                this.y = constrain(this.y, -BOUND_MARGIN, height + BOUND_MARGIN);
+            }
+        }
+
+        class Stick {
+            constructor(p1, p2, len) {
+                this.p1 = p1; this.p2 = p2; this.length = len;
+            }
+            contract() {
+                let dx = this.p2.x - this.p1.x;
+                let dy = this.p2.y - this.p1.y;
+                let d = Math.hypot(dx, dy);
+                if (d === 0) return;
+                let diff = this.length - d;
+                let percent = (diff / d) * STIFFNESS * 0.5;
+                let offsetX = dx * percent;
+                let offsetY = dy * percent;
+                
+                let lock1 = this.p1.isPinned || this.p1.isGrabbed;
+                let lock2 = this.p2.isPinned || this.p2.isGrabbed;
+                
+                if (!lock1) { this.p1.x -= offsetX; this.p1.y -= offsetY; }
+                if (!lock2) { this.p2.x += offsetX; this.p2.y += offsetY; }
+            }
+        }
+
+        class VerletSystem {
+            constructor(cols, rows, spacingX, spacingY) {
+                this.particles = [];
+                this.sticks = [];
+                this.baseArea = spacingX * spacingY; 
+                
+                for (let y = 0; y < rows; y++) {
+                    this.particles[y] = [];
+                    for (let x = 0; x < cols; x++) {
+                        let p = new Particle(startX + x * spacingX, startY + y * spacingY);
+                        if (y === 0) p.isPinned = true; 
+                        this.particles[y].push(p);
+                    }
+                }
+                
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        if (x < cols - 1) this.sticks.push(new Stick(this.particles[y][x], this.particles[y][x+1], spacingX));
+                        if (y < rows - 1) this.sticks.push(new Stick(this.particles[y][x], this.particles[y+1][x], spacingY));
+                    }
+                }
+            }
+
+            update() {
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        this.particles[y][x].update();
+                    }
+                }
+                for (let i = 0; i < ITERATIONS; i++) {
+                    for (let stick of this.sticks) stick.contract();
+                }
+            }
+
+            handleInteraction() {
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        this.particles[y][x].isGrabbed = false;
+                    }
+                }
+
+                for (let side in activeHands) {
+                    let hand = activeHands[side];
+                    
+                    if (hand.pinching) {
+                        if (!hand.grabbedPoints) {
+                            hand.grabbedPoints = [];
+                            for (let y = 0; y < ROWS; y++) {
+                                for (let x = 0; x < COLS; x++) {
+                                    let p = this.particles[y][x];
+                                    // 跳过顶部固定行，防止上边缘被扯下来
+                                    if (p.isPinned) continue;
+                                    if (Math.hypot(p.x - hand.x, p.y - hand.y) < GRAB_RADIUS) {
+                                        hand.grabbedPoints.push({ p: p, ox: p.x - hand.x, oy: p.y - hand.y });
+                                        p.state = 0;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        for (let gp of hand.grabbedPoints) {
+                            gp.p.x = hand.x + gp.ox;
+                            gp.p.y = hand.y + gp.oy;
+                            gp.p.px = gp.p.x; 
+                            gp.p.py = gp.p.y;
+                            gp.p.isGrabbed = true; 
+                        }
+                    } else {
+                        if (hand.grabbedPoints && hand.grabbedPoints.length > 0) {
+                            let triggeredState = 0;
+                            let force = 0;
+                            
+                            if (hand.vy < -10) { 
+                                triggeredState = 1;
+                                force = 0.15;
+                            } else if (hand.vy > 10) {
+                                triggeredState = 2;
+                                force = 0.08;
+                            }
+
+                            for (let gp of hand.grabbedPoints) {
+                                gp.p.state = triggeredState;
+                                if (triggeredState === 1) {
+                                    // 使用幕布顶部 startY 的相对偏移，而非硬编码像素值
+                                    gp.p.targetY = startY + (Math.random() * 40 - 35);
+                                    gp.p.x += (Math.random() * 40 - 20);
+                                    gp.p.restoreForce = force;
+                                } else if (triggeredState === 2) {
+                                    gp.p.restoreForce = force;
+                                }
+                            }
+                            hand.grabbedPoints = null;
+                        }
+                    }
+                }
+            }
+
+            renderTexture() {
+                noStroke();
+                for (let y = 0; y < ROWS - 1; y++) {
+                    for (let x = 0; x < COLS - 1; x++) {
+                        let p1 = this.particles[y][x];
+                        let p2 = this.particles[y][x+1];
+                        let p3 = this.particles[y+1][x+1];
+                        let p4 = this.particles[y+1][x];
+                        
+                        let area = 0.5 * Math.abs(p1.x*(p2.y - p3.y) + p2.x*(p3.y - p1.y) + p3.x*(p1.y - p2.y)) +
+                                   0.5 * Math.abs(p1.x*(p3.y - p4.y) + p3.x*(p4.y - p1.y) + p4.x*(p1.y - p3.y));
+                        
+                        let ratio = area / this.baseArea;
+                        
+                        if (ratio < 0.95) { 
+                            let alpha = map(ratio, 0.95, 0.4, 0, 120, true);
+                            fill(0, alpha);
+                            beginShape(); vertex(p1.x, p1.y); vertex(p2.x, p2.y); vertex(p3.x, p3.y); vertex(p4.x, p4.y); endShape(CLOSE);
+                        } else if (ratio > 1.05) { 
+                            let alpha = map(ratio, 1.05, 1.5, 0, 60, true);
+                            fill(255, alpha);
+                            beginShape(); vertex(p1.x, p1.y); vertex(p2.x, p2.y); vertex(p3.x, p3.y); vertex(p4.x, p4.y); endShape(CLOSE);
+                        }
+                    }
+                }
+                
+                let ctx = drawingContext;
+                const traceEdge = () => {
+                    ctx.beginPath();
+                    let pStart = this.particles[0][0];
+                    ctx.moveTo(pStart.x, pStart.y);
+                    for(let x=1; x<COLS; x++) ctx.lineTo(this.particles[0][x].x, this.particles[0][x].y);
+                    for(let y=1; y<ROWS; y++) ctx.lineTo(this.particles[y][COLS-1].x, this.particles[y][COLS-1].y);
+                    for(let x=COLS-2; x>=0; x--) ctx.lineTo(this.particles[ROWS-1][x].x, this.particles[ROWS-1][x].y);
+                    for(let y=ROWS-2; y>=0; y--) ctx.lineTo(this.particles[y][0].x, this.particles[y][0].y);
+                    ctx.closePath();
+                };
+
+                ctx.save();
+                traceEdge();
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 0;
+                ctx.stroke();
+                
+                traceEdge();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.lineWidth = 1.5;
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
+                ctx.shadowBlur = 12;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // --- 鼠标回退系统 ---
+        function mousePressed() {
+            if (activeHands['left'] || activeHands['right']) return; 
+            activeHands['mouse'] = {
+                x: mouseX, y: mouseY, vx: 0, vy: 0, pinching: true, grabbedPoints: null
+            };
+            if(physics) physics.handleInteraction();
+        }
+
+        function mouseDragged() {
+            if (activeHands['mouse']) {
+                activeHands['mouse'].vx = mouseX - activeHands['mouse'].x;
+                activeHands['mouse'].vy = mouseY - activeHands['mouse'].y;
+                activeHands['mouse'].x = mouseX;
+                activeHands['mouse'].y = mouseY;
+                if(physics) physics.handleInteraction();
+            }
+        }
+
+        function mouseReleased() {
+            if (activeHands['mouse']) {
+                activeHands['mouse'].pinching = false;
+                if(physics) physics.handleInteraction();
+                delete activeHands['mouse'];
+            }
+        }
+
+        // --- UI 与 录制核心功能 ---
+        function drawDebugHands() {
+            for (let side in activeHands) {
+                let h = activeHands[side];
+                if(side === 'mouse') continue;
+                
+                push();
+                fill(h.pinching ? 'rgba(0, 255, 150, 0.7)' : 'rgba(255, 255, 255, 0.4)');
+                noStroke();
+                ellipse(h.x, h.y, h.pinching ? 16 : 24);
+                
+                stroke(h.pinching ? 'rgba(0, 255, 150, 0.4)' : 'rgba(255, 255, 255, 0.15)');
+                strokeWeight(2);
+                noFill();
+                ellipse(h.x, h.y, GRAB_RADIUS * 2); 
+                pop();
+            }
+        }
+
+        function setupUIHandlers() {
+            document.getElementById('start-btn').addEventListener('click', () => {
+                document.getElementById('start-mask').style.opacity = '0';
+                setTimeout(() => document.getElementById('start-mask').style.display = 'none', 500);
+                if (videoElement) {
+                    videoElement.play();
+                }
+            });
+
+            const toggleBtn = document.getElementById('toggle-ui-btn');
+            toggleBtn.addEventListener('click', () => {
+                uiVisible = !uiVisible;
+                toggleBtn.innerText = uiVisible ? "👁️" : "🙈";
+                document.getElementById('bottom-right').classList.toggle('ui-hidden', !uiVisible);
+            });
+
+            document.getElementById('flip-btn').addEventListener('click', () => {
+                isFlipped = !isFlipped;
+            });
+
+            // 核心功能：背景视频与图片上传解析 (加入完善的播放安全策略)
+            const fileInput = document.getElementById('file-input');
+            document.getElementById('upload-btn').addEventListener('click', () => fileInput.click());
+            
+            fileInput.addEventListener('change', (e) => {
+                let file = e.target.files[0];
+                if (!file) return;
+                
+                if (uploadedMedia && mediaType === 'video') {
+                    uploadedMedia.stop();
+                    uploadedMedia.remove();
+                }
+
+                let url = URL.createObjectURL(file);
+                if (file.type.startsWith('video/')) {
+                    mediaType = 'video';
+                    uploadedMedia = createVideo(url, () => {
+                        // 彻底解决浏览器安全策略限制播放的问题
+                        uploadedMedia.elt.muted = true; 
+                        uploadedMedia.elt.setAttribute('playsinline', ''); 
+                        uploadedMedia.volume(0);
+                        uploadedMedia.loop(); 
+                        uploadedMedia.play(); 
+                        uploadedMedia.hide();
+                        initCurtain();
+                    });
+                } else if (file.type.startsWith('image/')) {
+                    mediaType = 'image';
+                    uploadedMedia = loadImage(url, () => {
+                        initCurtain();
+                    });
+                }
+            });
+
+            const scaleSlider = document.getElementById('scale-slider');
+            scaleSlider.addEventListener('input', (e) => {
+                globalScale = parseFloat(e.target.value);
+                initCurtain();
+            });
+
+            // --- Canvas 录制模块（完整交互流程） ---
+            const recordBtn = document.getElementById('record-btn');
+            const recordIndicator = document.getElementById('record-indicator');
+            const recordTimer = document.getElementById('record-timer');
+            const previewModal = document.getElementById('preview-modal');
+            const previewVideo = document.getElementById('preview-video');
+
+            function formatTime(sec) {
+                const m = Math.floor(sec / 60).toString().padStart(2, '0');
+                const s = (sec % 60).toString().padStart(2, '0');
+                return `${m}:${s}`;
+            }
+
+            function startRecordTimer() {
+                recordSeconds = 0;
+                recordTimer.textContent = '00:00';
+                recordIndicator.classList.add('active');
+                recordTimerInterval = setInterval(() => {
+                    recordSeconds++;
+                    recordTimer.textContent = formatTime(recordSeconds);
+                }, 1000);
+            }
+
+            function stopRecordTimer() {
+                if (recordTimerInterval) {
+                    clearInterval(recordTimerInterval);
+                    recordTimerInterval = null;
+                }
+                recordIndicator.classList.remove('active');
+            }
+
+            function showPreview(blob) {
+                const url = URL.createObjectURL(blob);
+                previewVideo.src = url;
+                previewModal.classList.add('active');
+            }
+
+            function hidePreview() {
+                previewModal.classList.remove('active');
+                if (previewVideo.src) {
+                    URL.revokeObjectURL(previewVideo.src);
+                    previewVideo.src = '';
+                }
+                pendingRecordBlob = null;
+            }
+
+            function triggerDownload(blob, mimeType) {
+                const ext = getFileExtension(mimeType);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `Optical_Curtain_Record.${ext}`;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+            }
+
+            function startRecording() {
+                try {
+                    const selectedMime = getRecorderMimeType();
+
+                    // 浏览器完全不支持视频录制时给出明确提示
+                    if (!selectedMime) {
+                        alert('您的浏览器不支持视频录制，请使用 Chrome、Firefox 或 Edge。');
+                        return;
+                    }
+
+                    const canvasElt = document.querySelector('canvas');
+                    // Safari 的 captureStream 在自动模式 (fps=0) 下配合 requestData 更稳定
+                    const captureFPS = isSafari() ? 0 : 30;
+                    const stream = canvasElt.captureStream(captureFPS);
+
+                    const options = { mimeType: selectedMime };
+
+                    recordedChunks = [];
+                    mediaRecorder = new MediaRecorder(stream, options);
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            recordedChunks.push(event.data);
+                        }
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const mime = mediaRecorder.mimeType || selectedMime || 'video/mp4';
+                        const blob = new Blob(recordedChunks, { type: mime });
+                        recordedChunks = [];
+                        pendingRecordBlob = blob;
+                        showPreview(blob);
+                    };
+
+                    mediaRecorder.onerror = () => {
+                        stopRecording();
+                        stopRecordTimer();
+                        alert('录制过程中发生错误，请重试。');
+                    };
+
+                    mediaRecorder.start(1000); // 每1秒收集一次数据块，确保即使异常退出也有部分数据
+                    isRecording = true;
+
+                    recordBtn.innerText = '⏹️';
+                    recordBtn.classList.add('recording');
+                    startRecordTimer();
+
+                    // 隐藏非录制控件，确保录制按钮保持可见
+                    const bottomRight = document.getElementById('bottom-right');
+                    const wasBottomHidden = bottomRight.classList.contains('ui-hidden');
+                    if (wasBottomHidden) {
+                        bottomRight.classList.remove('ui-hidden');
+                    }
+                    // 记录原始状态，用于恢复
+                    bottomRight.dataset.wasHidden = wasBottomHidden ? '1' : '0';
+
+                    document.getElementById('bottom-right').querySelector('.control-group').classList.add('ui-hidden');
+                    document.getElementById('flip-btn').classList.add('ui-hidden');
+                    document.getElementById('upload-btn').classList.add('ui-hidden');
+                    document.getElementById('toggle-ui-btn').classList.add('ui-hidden');
+                    uiAutoHiddenByRecord = true;
+                } catch (e) {
+                    alert('无法启动录制：' + e.message);
+                }
+            }
+
+            function stopRecording() {
+                if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+                try {
+                    mediaRecorder.stop();
+                } catch (e) {
+                    // 如果 stop 失败，直接重置状态
+                }
+                isRecording = false;
+                recordBtn.innerText = '🎥';
+                recordBtn.classList.remove('recording');
+                stopRecordTimer();
+
+                // 恢复 UI 显示
+                if (uiAutoHiddenByRecord) {
+                    const bottomRight = document.getElementById('bottom-right');
+                    if (bottomRight.dataset.wasHidden === '1') {
+                        bottomRight.classList.add('ui-hidden');
+                    }
+                    delete bottomRight.dataset.wasHidden;
+                    document.getElementById('bottom-right').querySelector('.control-group').classList.remove('ui-hidden');
+                    document.getElementById('flip-btn').classList.remove('ui-hidden');
+                    document.getElementById('upload-btn').classList.remove('ui-hidden');
+                    document.getElementById('toggle-ui-btn').classList.remove('ui-hidden');
+                    uiAutoHiddenByRecord = false;
+                }
+            }
+
+            recordBtn.addEventListener('click', () => {
+                if (!isRecording) {
+                    startRecording();
+                } else {
+                    stopRecording();
+                }
+            });
+
+            // 预览弹窗交互
+            document.getElementById('download-btn').addEventListener('click', () => {
+                if (pendingRecordBlob) {
+                    const mime = (mediaRecorder && mediaRecorder.mimeType) || getRecorderMimeType() || 'video/mp4';
+                    triggerDownload(pendingRecordBlob, mime);
+                }
+                hidePreview();
+            });
+
+            document.getElementById('discard-btn').addEventListener('click', () => {
+                hidePreview();
+            });
+        }
+
+        // --- 资源清理：防止页面卸载后摄像头持续占用 ---
+        window.addEventListener('beforeunload', cleanupResources);
+        window.addEventListener('pagehide', cleanupResources);
+
+        function cleanupResources() {
+            if (recordTimerInterval) clearInterval(recordTimerInterval);
+            if (mediapipeCamera) {
+                try { mediapipeCamera.stop(); } catch (e) { /* 忽略 */ }
+            }
+            if (videoCap && videoCap.elt && videoCap.elt.srcObject) {
+                videoCap.elt.srcObject.getTracks().forEach(t => t.stop());
+            }
+            if (uploadedMedia && mediaType === 'video') {
+                try { uploadedMedia.stop(); uploadedMedia.remove(); } catch (e) { /* 忽略 */ }
+            }
+        }
+    </script>
+</body>
+</html>
