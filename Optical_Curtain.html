@@ -134,11 +134,11 @@
         <div style="display: flex; gap: 10px;">
             <button class="icon-btn" id="record-btn" title="录制交互视频">🎥</button>
             <button class="icon-btn" id="flip-btn" title="翻转摄像头">🔄</button>
-            <button class="icon-btn" id="upload-btn" title="上传背景图/海浪视频">📁</button>
+            <button class="icon-btn" id="upload-btn" title="上传背景图">📁</button>
         </div>
     </div>
 
-    <input type="file" id="file-input" accept="image/*,video/*">
+    <input type="file" id="file-input" accept="image/*">
     <video id="webcam-video" playsinline></video>
     <div id="canvas-container"></div>
 
@@ -312,6 +312,7 @@
 
         // --- p5.js 核心引擎 ---
         function setup() {
+            frameRate(60);
             const canvas = createCanvas(windowWidth, windowHeight);
             canvas.parent('canvas-container');
             
@@ -873,10 +874,10 @@
 
                     const canvasElt = document.querySelector('canvas');
                     // Safari 的 captureStream 在自动模式 (fps=0) 下配合 requestData 更稳定
-                    const captureFPS = isSafari() ? 0 : 30;
+                    const captureFPS = isSafari() ? 0 : 60;
                     const stream = canvasElt.captureStream(captureFPS);
 
-                    const options = { mimeType: selectedMime };
+                    const options = { mimeType: selectedMime, videoBitsPerSecond: 8000000 };
 
                     recordedChunks = [];
                     mediaRecorder = new MediaRecorder(stream, options);
