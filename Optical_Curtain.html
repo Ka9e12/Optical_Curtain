@@ -380,15 +380,15 @@
             let sx = 0, sy = 0, sw = vw, sh = vh;
 
             if (canvasAspect > videoAspect) {
-                // 窗口比视频更宽 → 用满高度，裁左右
-                sh = vh;
-                sw = vh * canvasAspect;
-                sx = (vw - sw) / 2;
-            } else {
-                // 窗口比视频更高 → 用满宽度，裁上下
+                // 窗口比视频更宽：用满视频宽度，裁上下
                 sw = vw;
                 sh = vw / canvasAspect;
                 sy = (vh - sh) / 2;
+            } else {
+                // 窗口比视频更高或相等：用满视频高度，裁左右
+                sh = vh;
+                sw = vh * canvasAspect;
+                sx = (vw - sw) / 2;
             }
 
             image(videoCap, 0, 0, width, height, sx, sy, sw, sh);
