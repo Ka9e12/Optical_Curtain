@@ -56,7 +56,13 @@
         .slider { width: 100%; accent-color: #fff; }
         
         #file-input { display: none; }
-        #webcam-video { display: none; }
+        /* iOS Safari 兼容：不能用 display:none，否则摄像头帧不会解码 */
+        #webcam-video {
+            position: fixed; top: 0; left: 0;
+            width: 1px; height: 1px;
+            opacity: 0.01; pointer-events: none;
+            z-index: -1;
+        }
         
         /* 录制状态的闪烁动画 */
         @keyframes pulse-red {
@@ -325,9 +331,14 @@
             canvas.parent('canvas-container');
             
             videoCap = createCapture(VIDEO, {
-                video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+                video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
             }, () => {
+                // iOS Safari 兼容：确保 capture 元素不会被暂停解码
+                videoCap.elt.setAttribute('playsinline', '');
+                videoCap.elt.muted = true;
                 videoElement.srcObject = videoCap.elt.srcObject;
+                videoElement.setAttribute('playsinline', '');
+                videoElement.muted = true;
                 videoElement.play();
                 mediapipeCamera = new Camera(videoElement, {
                     onFrame: async () => { await hands.send({ image: videoElement }); },
@@ -335,7 +346,19 @@
                 });
                 mediapipeCamera.start();
             });
-            videoCap.hide();
+            // iOS Safari 兼容：不能用 display:none，否则视频帧不会解码
+            // p5.js 的 .hide() 会设置 display:none，在 iOS 上导致 canvas 全黑
+            const capElt = videoCap.elt;
+            capElt.style.position = 'fixed';
+            capElt.style.top = '0';
+            capElt.style.left = '0';
+            capElt.style.width = '1px';
+            capElt.style.height = '1px';
+            capElt.style.opacity = '0.01';
+            capElt.style.pointerEvents = 'none';
+            capElt.style.zIndex = '-1';
+            capElt.setAttribute('playsinline', '');
+            capElt.muted = true;
             
             initCurtain();
             setupUIHandlers();
@@ -704,8 +727,9 @@
             document.getElementById('start-btn').addEventListener('click', () => {
                 document.getElementById('start-mask').style.opacity = '0';
                 setTimeout(() => document.getElementById('start-mask').style.display = 'none', 500);
-                if (videoElement) {
-                    videoElement.play();
+                // iOS 兼容：仅在 srcObject 已配置时才调用 play（大多数情况下已在回调中调用）
+                if (videoElement && videoElement.srcObject) {
+                    videoElement.play().catch(() => {});
                 }
             });
 
@@ -823,6 +847,12 @@
 
             function startRecording() {
                 try {
+                    // 检测浏览器是否支持 MediaRecorder API（部分旧版 iPad Safari 不支持）
+                    if (typeof MediaRecorder === 'undefined') {
+                        alert('您的浏览器不支持视频录制功能，请升级到 iPadOS 14.5 或更高版本，或使用 Chrome/Firefox/Edge 浏览器。');
+                        return;
+                    }
+
                     const selectedMime = getRecorderMimeType();
 
                     // 浏览器完全不支持视频录制时给出明确提示
