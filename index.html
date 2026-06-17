@@ -193,32 +193,17 @@
         }
 
         function getRecorderMimeType() {
-            if (isSafari()) {
-                // Safari 仅支持 H.264/MP4 容器，codec 字符串必须带双引号
-                const safariCodecs = [
-                    'video/mp4;codecs="avc1.64001f"',  // High Profile Level 3.1
-                    'video/mp4;codecs="avc1.4d002a"',  // Main Profile Level 4.2
-                    'video/mp4;codecs="avc1.42E01E"',  // Baseline Profile Level 3.0
-                    'video/mp4;codecs="avc1.42001E"',  // Baseline (无约束)
-                    'video/mp4',                         // 最终回退
-                ];
-                for (let mt of safariCodecs) {
-                    if (MediaRecorder.isTypeSupported(mt)) return mt;
-                }
-                return '';
-            } else {
-                // Chrome / Firefox / Edge：优先 WebM
-                const chromeCodecs = [
-                    'video/webm;codecs=vp9',
-                    'video/webm;codecs=vp8',
-                    'video/webm',
-                    'video/mp4',
-                ];
-                for (let mt of chromeCodecs) {
-                    if (MediaRecorder.isTypeSupported(mt)) return mt;
-                }
-                return '';
+            // 统一优先 H.264/MP4，兼容所有平台（手机相册、微信、社交平台均可直接播放）
+            const codecs = [
+                'video/mp4;codecs="avc1.64001f"',  // H.264 High Profile，画质优先
+                'video/mp4;codecs="avc1.42E01E"',  // H.264 Baseline，老旧设备兼容
+                'video/mp4',                         // 通用 MP4 兜底
+                'video/webm',                        // 极少数不支持 MP4 的浏览器退路
+            ];
+            for (let mt of codecs) {
+                if (MediaRecorder.isTypeSupported(mt)) return mt;
             }
+            return '';
         }
 
         function getFileExtension(mimeType) {
