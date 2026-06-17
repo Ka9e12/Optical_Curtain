@@ -189,7 +189,7 @@
         function isSafari() {
             const ua = navigator.userAgent;
             // 匹配含 Safari 但不含 Chrome/CriOS/Android 的 UA（覆盖 macOS 和 iPadOS 的现代 Safari）
-            return /^((?!chrome|android).)*safari/i.test(ua);
+            return /^((?!chrome|android|crios).)*safari/i.test(ua);
         }
 
         function getRecorderMimeType() {
