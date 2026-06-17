@@ -369,6 +369,31 @@
             initCurtain();
         }
 
+        // 将摄像头画面以 object-fit: cover 方式绘制到全画布
+        function drawCameraCover() {
+            const vw = videoCap.elt ? (videoCap.elt.videoWidth || videoCap.width || 640) : 640;
+            const vh = videoCap.elt ? (videoCap.elt.videoHeight || videoCap.height || 480) : 480;
+
+            const videoAspect = vw / vh;
+            const canvasAspect = width / height;
+
+            let sx = 0, sy = 0, sw = vw, sh = vh;
+
+            if (canvasAspect > videoAspect) {
+                // 窗口比视频更宽 → 用满高度，裁左右
+                sh = vh;
+                sw = vh * canvasAspect;
+                sx = (vw - sw) / 2;
+            } else {
+                // 窗口比视频更高 → 用满宽度，裁上下
+                sw = vw;
+                sh = vw / canvasAspect;
+                sy = (vh - sh) / 2;
+            }
+
+            image(videoCap, 0, 0, width, height, sx, sy, sw, sh);
+        }
+
         function initCurtain() {
             let aspect = 4 / 3;
             if (uploadedMedia) {
@@ -404,7 +429,7 @@
             
             push();
             if (isFlipped) { translate(width, 0); scale(-1, 1); }
-            image(videoCap, 0, 0, width, height);
+            drawCameraCover();
             pop();
             
             push();
@@ -448,7 +473,7 @@
             
             push();
             if (isFlipped) { translate(width, 0); scale(-1, 1); }
-            image(videoCap, 0, 0, width, height);
+            drawCameraCover();
             pop();
             
             ctx.restore(); 
